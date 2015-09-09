@@ -1,10 +1,17 @@
+# Specify your private key and email address as shown in the Cloudflare portal.
 auth: 
-  api_key: API_KEY_FROM_CLOUDFLARE
-  email: CLOUDFLARE_ACCOUNT_EMAIL
+        api_key: API_KEY_FROM_CLOUDFLARE
+        email: CLOUDFLARE_ACCOUNT_EMAIL
+# Cloudflare specific settings.
 cf:
-  domain: "example.com"
-  host: "foo"
-  create_record: true
-  ttl: 2
+        # The name of your domain/zone
+        domain: "example.com"
+        # The specific host entry you want to update/create.
+        host: "foo"
+        # If the host doesn't exist, should I create it?
+        create_record: true
+        # Time to Live (Cache) on a newly created record. This defaults to 2 minutes (shortest)
+        ttl: 2
 cfddns:
-  debug: false
+        # Enable debug messages
+        debug: false
