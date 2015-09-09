@@ -1,5 +1,4 @@
 require "yaml"
-require 'rest-client'
 require "uri"
 require "json"
 require "unirest"
@@ -7,56 +6,87 @@ require "unirest"
 config = YAML.load_file(ARGV[0])
 auth_data = config['auth']
 cf_data = config['cf']
+cfddns_data = config['cfddns']
 full_name = cf_data["host"] + "." + cf_data["domain"]
 
-RestClient.log = 'stdout'
+headers = {"X-Auth-Email" => auth_data["email"],
+           "X-Auth-Key" => auth_data["api_key"],
+           "Content-Type" => "application/json",
+}
+urls = {:public_ip => "https://icanhazip.com",
+	:cf_dns_zone => "https://api.cloudflare.com/client/v4/zones",
+	:cf_dns_records => "https://api.cloudflare.com/client/v4/zones/%s/dns_records/%s",
+}
 
-headers = { "X-Auth-Email": auth_data["email"], "X-Auth-Key": auth_data["api_key"] }
-
-response = RestClient.get "https://www.icanhazip.com"
-
+response = Unirest.get urls[:public_ip]
 public_ip = response.body.chop
 
-puts "My IP: #{public_ip}"
-puts "User: #{auth_data['email']}"
-puts "Target: #{full_name}"
+if (cfddns_data["debug"])
+  puts "My IP: #{public_ip}"
+  puts "User: #{auth_data['email']}"
+  puts "Target: #{full_name}"
+end
 
-response = RestClient::Request.execute(method: :get, url: "https://api.cloudflare.com/client/v4/zones", 
-  headers: {"X-Auth-Email": auth_data["email"], "X-Auth-Key": auth_data["api_key"], params: {:name => cf_data["domain"]}})
 
-zones = JSON.parse(response.body)
+response = Unirest.get(urls[:cf_dns_zone],
+  headers: headers,
+  :parameters => {:name => cf_data["domain"]})
+
+
+zones = response.body
 
 zone_id = zones["result"][0]["id"]
 
-url = "https://api.cloudflare.com/client/v4/zones/" + zone_id + "/dns_records"
+url = urls[:cf_dns_records] % [zone_id, nil]
 
-response = RestClient::Request.execute(method: :get, url: url,
-  headers: {"X-Auth-Email": auth_data["email"], "X-Auth-Key": auth_data["api_key"], params: {:name => full_name}})
+response = Unirest.get(url,
+  headers: headers, 
+  parameters: {:name => full_name})
 
-records = JSON.parse(response.body)
+records = response.body
 
 if (records["result_info"]["total_count"] == 0)
-  puts "I couldn't find that record. Should I create it?"
+	if (not cf_data["create_record"])
+		abort "I didn't find the record you requested and you have our config set to NOT create records. Aborting."
+	else
+		parameters = {:type => "A", :name => full_name, :content => public_ip}
+		response = Unirest.post(urls[:cf_dns_records] % [zone_id, nil],
+					parameters: parameters.to_json,
+					headers: headers)
+		result = response.body
+        	if (result["success"] == true)
+			puts "Created #{result['result']['name']} with an IP of #{result['result']['content']} Exiting."
+	        else
+		       	abort "Failed to update with errors: #{result['errors'][0]['code']}: #{result['errors'][0]['message']}. Aborting."
+	        end
+	end
 else
   records["result"].each do |record|
      if (record["name"] != full_name)
        puts "Not a match"
      elsif (record["type"] != "A")
-       abort "Record found but not an A record. Quitting."
+	     abort "Record found was a #{record['type']} but I only work with A records. Aborting."
      elsif (public_ip == record["content"])
        puts "Already up to date"
        exit
      else
-       puts "I should do an update."
+       puts "Outdated record found. Updating #{record['name']} from #{record['content']} to #{public_ip}"
        url = "https://api.cloudflare.com/client/v4/zones/" + zone_id + "/dns_records/" + record["id"]
-       # puts "curl -X PUT '#{url}' -H 'X-Auth-Email: #{auth_data['email']}' -H 'X-Auth-Key: #{auth_data['api_key']}' --data '#{{"content" => public_ip}.to_json}'"
+       new_record = record
+       new_record["content"] = public_ip
        response = Unirest.put(url, 
-	 parameters: {"content" => public_ip}.to_json,
+	 parameters: new_record.to_json,
          headers: {"X-Auth-Email" => auth_data["email"], 
 	           "X-Auth-Key" => auth_data["api_key"], 
-		   "Content_Type" => "application/json",
+		   "Content-Type" => "application/json",
        })
-       puts response
+       result = response.body
+       if (result["success"] == true)
+	       puts "Completed update. Exiting."
+	       exit
+       else
+	       abort "Failed to update with errors: #{result['errors'][0]['code']}: #{result['errors'][0]['message']}. Aborting."
+       end
 
      end
   end

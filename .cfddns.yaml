@@ -1,0 +1,10 @@
+auth: 
+  api_key: API_KEY_FROM_CLOUDFLARE
+  email: CLOUDFLARE_ACCOUNT_EMAIL
+cf:
+  domain: "example.com"
+  host: "foo"
+  create_record: true
+  ttl: 2
+cfddns:
+  debug: false
